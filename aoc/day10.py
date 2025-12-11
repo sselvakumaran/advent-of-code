@@ -8,8 +8,8 @@ import operator
 import itertools
 from dataclasses import dataclass, field
 import heapq
-from collections import Counter
-from typing import List, Optional, Tuple
+from collections import Counter, defaultdict
+from typing import Dict, List, Optional, Tuple
 
 pattern = re.compile(r"\[([\.#]+)\] (( ?\([\d,]+\))+) {([\d,]+)}")
 activation_table = {'.': '0', '#': '1'}
@@ -64,6 +64,7 @@ def part2(data: str):
 		def __mul__(self, scalar: int): return Vector(list(map(lambda x: x * scalar, self.lst)))
 		def __le__(self, other): return all(a <= b for a, b in zip(self.lst, other.lst))
 		def __lt__(self, other): return self.max() < other.max()
+		def __eq__(self, other): return self.lst == other.lst
 		def __len__(self): return len(self.lst)
 		def l1(self): return sum(self.lst)
 		def max(self): return max(self.lst)
@@ -79,84 +80,72 @@ def part2(data: str):
 			for i in idxs:
 				data[i] = 1
 			return Vector(data)
+		def __hash__(self): return hash(tuple(self.lst))
+
+	def gaussian_elimination(A: List[List[int]], b: List[int]):
+		m, n = len(A), len(A[0])
+		
+		M = [A[i] + [b[i]] for i in range(m)]
+		pivots = [-1 for _ in range(n)]
+
+		row = 0
+		for col in range(n):
+			pivot = None
+			for r in range(row, m):
+				if M[r][col] != 0:
+					pivot = r
+					break
+			if pivot is None: continue
+			M[row], M[pivot] = M[pivot], M[row]
+			pivots[col] = row
+
+			denominator = M[row][col]
+			for r in range(m):
+				if r == row: continue
+				if M[r][col] == 0: continue
+				numerator = M[r][col]
+				# instead of division, use denominator * M[r] - numerator * M[row]
+				for c in range(col, n + 1):
+					M[r][c] = denominator * M[r][c] - numerator * M[row][c]
+			row += 1
+		for r in range(m):
+			if all(M[r][c] == 0 for c in range(n)) and M[r][n] != 0:
+				raise ValueError("done messed up bud")
+		bound, free = [], []
+		for i in range(m):
+			if pivots[i] < 0: free.append(i)
+			else: bound.append(i)
+		return M, (bound, free)
 	
-	# ESTIMATOR - DOES NOT FIND GLOBAL MINIMUM
-	def greedy(A: List[Vector], y: Vector):
-		N = len(y)
-		y_hat = Vector.zero(N)
-		dims_required = set(range(N))
-		count = 0
-		def greed_factor(v):
-			nonlocal dims_required
-			idxs = v.nonzero_idxs()
-			return (len(set(v.nonzero_idxs()) & dims_required), -len(idxs))
-		while dims_required:
-			# find A that covers the most dimensions within dims_required
-			v = max(A, key=greed_factor)
-			# c = minimum amount to fulfill all deficits / maximum deficit
-			c = (y - y_hat).max()
-			y_hat = y_hat + (v * c)
-			dims_required.difference_update(v.pos_idxs())
-			count += c
-		return count
+	def determine_x_from_free_variables(M, bound: List[int], free: Dict[int, int]):
+		m, n = len(M), len(M[0]) - 1
+		x = [0 for _ in range(n)]
+		for c, v in free.items():
+			x[c] = v
+		
+		# ...
 
-	# use DFS, however update so one action is adding maximum without exceeding bounds
-	# for each vector, find maximum it can be used without going over bounds
-	"""
-(3) (1,3) (2) (2,3) (0,2) (0,1) {3,5,4,7}
- 0 1 2 3 4 5
-[0 0 0 0 1 1] x >= 3
-[0 1 0 0 0 1] x >= 5
-[0 0 1 1 1 0] x >= 4
-[1 1 0 1 0 0] x >= 7
-x4 + x5 >= 3
-x1 + x5 >= 5
-x2 + x3 + x4 >= 3
-x0 + x1 + x3 >= 7
-
-bind v0 = x0 + x1 + x3
-v0 >= 7
-bind v1 = 
-
-"""
 	def ILP(A: List[Vector], y: Vector):
 		N = len(A)
 		D = len(y)
 
-		best_cost = greedy(A, y)
-		# g, cost, x, y_hat
-		# note: g = cost + max(remaining_deficits)
-		Q = [(0, 0, Vector.zero(), Vector.zero())]
-		while Q:
-			_, cost, x, y_hat = heapq.heappop(Q)
-			if y <= y_hat:
-				best_cost = min(best_cost, cost)
-				continue
-			deficits: Vector = (y - y_hat)
-			# ... something here
+		v_to_idx = {i: v.pos_idxs() for i, v in enumerate(A)}
+		idx_to_v = defaultdict(list)
+		for i, ds in v_to_idx.items():
+			for d in ds: idx_to_v[d].append(i)
+		
+		# ideally: iterate over free variables to determine values
 
-			# dont add if cost is too high (> best_cost)
+		return 
 
-
-
-		# def dfs(x: Vector, y_hat: Vector, cost: int):
-		# 	nonlocal best_cost
-		# 	if cost >= best_cost: return
-		# 	if y <= y_hat: best_cost = min(best_cost, cost)
-		# 	deficits = (y - y_hat)
-			
-		# 	# for all nonzero deficits,
-		# 	pass
-
-		return best_cost
+	from tqdm import tqdm
 
 	out = 0
-	for _, buttons, joltages in parsed:
+	for _, buttons, joltages in tqdm(parsed):
 		N = len(joltages)
 		Vs = list(map(lambda b: Vector.from_idx(b, N), buttons))
 		J = Vector(list(joltages))
-		print(greedy(Vs, J))
-		#out += sum(ILP(Vs, J))
+		out += ILP(sorted(Vs, key=lambda x: len(x.pos_idxs()), reverse=True), J)
 	return out
 		
 
