@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import heapq
 from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Tuple
+from fractions import Fraction
 
 pattern = re.compile(r"\[([\.#]+)\] (( ?\([\d,]+\))+) {([\d,]+)}")
 activation_table = {'.': '0', '#': '1'}
@@ -52,102 +53,189 @@ def part1(data: str):
 		out += search_out
 	return out
 
-def part2(data: str):
-	parsed = parse_data(data)
+def part2(data: str) -> int:
 
-	# no, i'm NOT going to import numpy!!
-	@dataclass(frozen=True)
-	class Vector:
-		lst: List[int]
-		def __add__(self, other): return Vector(list(map(operator.add, self.lst, other.lst)))
-		def __sub__(self, other): return Vector(list(map(operator.sub, self.lst, other.lst)))
-		def __mul__(self, scalar: int): return Vector(list(map(lambda x: x * scalar, self.lst)))
-		def __le__(self, other): return all(a <= b for a, b in zip(self.lst, other.lst))
-		def __lt__(self, other): return self.max() < other.max()
-		def __eq__(self, other): return self.lst == other.lst
-		def __len__(self): return len(self.lst)
-		def l1(self): return sum(self.lst)
-		def max(self): return max(self.lst)
-		def argmax(self): return max(range(len(self.lst)), key=self.lst.__getitem__)
-		def __getitem__(self, i): return self.lst[i]
-		@staticmethod
-		def zero(size: int): return Vector([0 for _ in range(size)])
-		def pos_idxs(self): return [i for i, d in enumerate(self.lst) if d > 0]
-		def dot(self, A: List['Vector']): return sum(map(lambda c, x: x.__mul__(c), self.lst, A))
-		@staticmethod
-		def from_idx(idxs: List[int], size: int):
-			data = [0 for _ in range(size)]
-			for i in idxs:
-				data[i] = 1
-			return Vector(data)
-		def __hash__(self): return hash(tuple(self.lst))
+	LARGE = Fraction(10**10)
+	def row_sub(target: List[Fraction], source: List[Fraction], factor: Fraction) -> None:
+		for j in range(len(target)):
+			target[j] -= factor * source[j]
 
-	def gaussian_elimination(A: List[List[int]], b: List[int]):
+	def row_scale(row: List[Fraction], divisor: Fraction) -> None:
+		for j in range(len(row)):
+			row[j] /= divisor
+
+	def pivot(tableau: List[List[Fraction]], row: int, col: int) -> None:
+		row_scale(tableau[row], tableau[row][col])
+		for r in range(len(tableau)):
+			if r != row and tableau[r][col] != 0:
+				row_sub(tableau[r], tableau[row], tableau[r][col])
+
+
+	def simplex(A: List[List[int]], b: List[int]) -> Optional[Tuple[List[Fraction], Fraction]]:
 		m, n = len(A), len(A[0])
-		
-		M = [A[i] + [b[i]] for i in range(m)]
-		pivots = [-1 for _ in range(n)]
 
-		row = 0
-		for col in range(n):
-			pivot = None
-			for r in range(row, m):
-				if M[r][col] != 0:
-					pivot = r
-					break
-			if pivot is None: continue
-			M[row], M[pivot] = M[pivot], M[row]
-			pivots[col] = row
+		tableau = [
+			[Fraction(A[i][j]) for j in range(n)]
+			+ [Fraction(1 if i == k else 0) for k in range(m)]
+			+ [Fraction(b[i])]
+			for i in range(m)
+		]
 
-			denominator = M[row][col]
-			for r in range(m):
-				if r == row: continue
-				if M[r][col] == 0: continue
-				numerator = M[r][col]
-				# instead of division, use denominator * M[r] - numerator * M[row]
-				for c in range(col, n + 1):
-					M[r][c] = denominator * M[r][c] - numerator * M[row][c]
-			row += 1
-		for r in range(m):
-			if all(M[r][c] == 0 for c in range(n)) and M[r][n] != 0:
-				raise ValueError("done messed up bud")
-		bound, free = [], []
-		for i in range(m):
-			if pivots[i] < 0: free.append(i)
-			else: bound.append(i)
-		return M, (bound, free)
-	
-	def determine_x_from_free_variables(M, bound: List[int], free: Dict[int, int]):
-		m, n = len(M), len(M[0]) - 1
-		x = [0 for _ in range(n)]
-		for c, v in free.items():
-			x[c] = v
-		
-		# ...
+		basis = list(range(n, n + m))
+		obj = [Fraction(0) for _ in range(n)] + [Fraction(1) for _ in range(m)] + [Fraction(0)]
 
-	def ILP(A: List[Vector], y: Vector):
-		N = len(A)
-		D = len(y)
+		for row in tableau:
+			row_sub(obj, row, Fraction(1))
+		tableau.append(obj)
 
-		v_to_idx = {i: v.pos_idxs() for i, v in enumerate(A)}
-		idx_to_v = defaultdict(list)
-		for i, ds in v_to_idx.items():
-			for d in ds: idx_to_v[d].append(i)
-		
-		# ideally: iterate over free variables to determine values
+		while True:
+			entering = min(range(n + m), key=lambda j: tableau[-1][j])
+			if tableau[-1][entering] >= 0:
+				break
 
-		return 
+			leaving, best_ratio = None, None
+			for i in range(m):
+				if tableau[i][entering] > 0:
+					ratio = tableau[i][-1] / tableau[i][entering]
+					if best_ratio is None or ratio < best_ratio:
+						leaving, best_ratio = i, ratio
 
-	from tqdm import tqdm
+			if leaving is None:
+				return None
 
-	out = 0
-	for _, buttons, joltages in tqdm(parsed):
-		N = len(joltages)
-		Vs = list(map(lambda b: Vector.from_idx(b, N), buttons))
-		J = Vector(list(joltages))
-		out += ILP(sorted(Vs, key=lambda x: len(x.pos_idxs()), reverse=True), J)
-	return out
-		
+			pivot(tableau, leaving, entering)
+			basis[leaving] = entering
+
+		if tableau[-1][-1] < 0:
+			return None
+
+		for i, basis_var in enumerate(basis):
+			if basis_var >= n:
+				for j in range(n):
+					if tableau[i][j] != 0:
+						pivot(tableau, i, j)
+						basis[i] = j
+						break
+
+		tableau[-1] = [Fraction(1) for _ in range(n)] + [Fraction(0) for _ in range(m+1)]
+		for i, basis_var in enumerate(basis):
+			if tableau[-1][basis_var] != 0:
+				row_sub(tableau[-1], tableau[i], tableau[-1][basis_var])
+
+		while True:
+			entering = min(range(n), key=lambda c: tableau[-1][c])
+			if tableau[-1][entering] >= 0:
+				break
+
+			leaving, best_ratio = None, None
+			for i in range(m):
+				if tableau[i][entering] > 0:
+					ratio = tableau[i][-1] / tableau[i][entering]
+					if best_ratio is None or ratio < best_ratio:
+						leaving, best_ratio = i, ratio
+
+			if leaving is None:
+				return None
+
+			pivot(tableau, leaving, entering)
+			basis[leaving] = entering
+
+		x = [Fraction(0) for _ in range(n)]
+		for i, basis_var in enumerate(basis):
+			if basis_var < n:
+				x[basis_var] = tableau[i][-1]
+
+		return x, sum(x)
+
+	def lp_with_bounds(
+		A: List[List[int]],
+		b: List[int],
+		lb: List[int],
+		ub: List[Optional[int]],
+	) -> Optional[Tuple[List[Fraction], Fraction]]:
+		m, n = len(A), len(A[0])
+
+		lb_constraints = [(j, lb[j]) for j in range(n) if lb[j] > 0]
+		ub_constraints = [(j, ub[j]) for j in range(n) if ub[j] is not None]
+
+		n_aug = n + len(lb_constraints) + len(ub_constraints)
+
+		A_aug = [row + [0 for _ in range(n_aug - n)] for row in A]
+		b_aug = b.copy()
+
+		for i, (j, val) in enumerate(lb_constraints):
+			row = [0 for _ in range(n_aug)]
+			row[j] = 1
+			row[n + i] = -1
+			A_aug.append(row)
+			b_aug.append(val)
+
+		for i, (j, val) in enumerate(ub_constraints):
+			row = [0 for _ in range(n_aug)]
+			row[j] = 1
+			row[n + len(lb_constraints) + i] = 1
+			A_aug.append(row)
+			b_aug.append(val)
+
+		result = simplex(A_aug, b_aug)
+		if result is None:
+			return None
+
+		x_aug, _ = result
+		return x_aug[:n], sum(x_aug[:n])
+
+	def ilp(A: List[List[int]], b: List[int]) -> int:
+		n = len(A[0])
+		best_obj: Fraction = LARGE
+
+		def branch_and_bound(lb: List[int], ub: List[Optional[int]]) -> None:
+			nonlocal best_obj
+
+			result = lp_with_bounds(A, b, lb, ub)
+			if result is None:
+				return
+
+			x_lp, obj_lp = result
+			if obj_lp >= best_obj:
+				return
+
+			frac_idx = next((j for j in range(n) if x_lp[j].denominator != 1), None)
+
+			if frac_idx is None:
+				best_obj = min(obj_lp, best_obj)
+				return
+
+			floor_val = int(x_lp[frac_idx])
+
+			ub_branch = ub.copy()
+			ub_branch[frac_idx] = floor_val if ub[frac_idx] is None else min(ub[frac_idx], floor_val)
+			branch_and_bound(lb, ub_branch)
+
+			lb_branch = lb.copy()
+			lb_branch[frac_idx] = floor_val + 1
+			branch_and_bound(lb_branch, ub)
+
+		branch_and_bound([0 for _ in range(n)], [None for _ in range(n)])
+
+		if best_obj >= LARGE:
+			raise ValueError("No feasible integer solution found")
+
+		return int(best_obj)
+
+
+	parsed = parse_data(data)
+	total = 0
+	for _, buttons, joltages in parsed:
+		num_joltages, num_buttons = len(joltages), len(buttons)
+
+		A = [[0 for _ in range(num_buttons)] for _ in range(num_joltages)]
+		for col, button_set in enumerate(buttons):
+			for row in button_set:
+				A[row][col] = 1
+
+		total += ilp(A, list(joltages))
+
+	return total
 
 def valid_file(path):
 	if not os.path.isfile(path):
